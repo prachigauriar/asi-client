@@ -1,0 +1,189 @@
+#!/usr/bin/env ruby
+
+#
+# This script collects data from an IBM Tivoli Monitoring agent using the HTTP-based Agent Service Interface (ASI).
+# It does not perform much error checking nor does it do anything with returned data beyond printing it out to the
+# standard output device. However, the +get_attribute_group_data+ function can be used or built upon to make a more
+# robust ASI client.
+
+
+##
+# Instances of AttributeGroupData model the data for a single ITM attribute group. Each instance has a name and a set of rows.
+# The primary methods to use are +new_with_xml+, which takes the XML response string from an ASI request and returns an
+# AttributeGroupData instance, and +to_table+, which returns a tabular string representation of the receiver .
+class AttributeGroupData
+  include Enumerable
+
+  ##
+  # The name of the attribute group.
+  attr_reader :name
+
+  ##
+  # An array of rows representing the attribute group's data. Each element in +rows+ is a hash whose key is a column name and whose
+  # value is the attribute value for that row and column.
+  attr_reader :rows
+
+
+  ##
+  # Initializes a new AttributeGroupData instance with the specified name and an empty set of rows.
+  # +name+::    The name of the attribute group whose data is being represented.
+  def initialize(name)
+    @name = name
+    @rows = Array.new
+  end
+
+  ##
+  # Simply passes on Enumerable calls to the instance's rows.
+  def each(&block)
+    @rows.each(&block)
+  end
+
+
+  ##
+  # Returns a new AttributeGroupData instance by parsing the XML specified in +xml_string+.
+  # +xml_string+::    An XML response string that came back via the Agent Service Interface.
+  def self.new_with_xml(xml_string)
+    require 'libxml'
+
+    document = LibXML::XML::Parser.string(xml_string).parse
+    root_element = document.root
+
+    # Get the attribute group name
+    name_node = root_element.find_first('SQLTABLE/TABLENAME')
+    return nil if !name_node
+    attribute_group = AttributeGroupData.new(name_node.content)
+
+    # Iterate over all the row names, grabbing the column data
+    root_element.find('//ROW').each do |row_node|
+      row_hash = Hash.new
+
+      # For each column of data, get the column's name and data and add it to the row_hash
+      row_node.find('COLUMN').each do |column_node|
+        name_node = column_node.find_first('NAME')
+        data_node = column_node.find_first('DATA')
+        next if !name_node || !data_node
+
+        # If the content is in a CDATA section, we have a string. Otherwise, we have a number.
+        data = data_node.child? && data_node.child.cdata? ? data_node.content : data_node.content.to_i
+        row_hash[name_node.content] = data
+      end
+
+      attribute_group.rows << row_hash
+    end
+
+    attribute_group
+  end
+
+
+  ##
+  # Returns a tabular string representation of the attribute group's data. If +column_names+ is non-+nil+, only returns
+  # data for the columns specified; otherwise returns data for all columns.
+  #
+  # +column_names+::    An array of columsn to display data for.
+  # +format+::          The format to output data in. Must be either :text or :html. If it is not one of these, outputs as text.
+  def to_table(column_names=nil, format="text")
+    require 'tabular'
+
+    stringio = StringIO.new;
+    $stderr.puts "Request for #{@name} data returned #{@rows.length} #{@rows.length != 1 ? "rows" : "row"}."
+
+    if rows.length > 0
+      # If no column names were specified, use all the columns in the first row (in alphabetical order)
+      column_names = @rows[0].keys.sort if !column_names
+
+      # Create a table with a Column for each column name
+      columns = column_names.collect { |column_name| Tabular::Column.new(column_name) }
+      table = Tabular::Table.new(*columns)
+
+      # Create our array of data rows
+      data = @rows.collect { |row| column_names.collect { |column_name| row[column_name] } }
+
+      # Set the table's data and write out the tabular representation to stringio
+      table.data = data
+      stringio.puts(format == :html ? table.to_html("Data for #{self.name}") : table.to_s)
+    end
+
+    stringio.string
+  end
+end
+
+
+##
+# Gets the specified attribute group's data from the agent/service_point specified and returns a new AttributeGroupData
+# object which contains that data.
+#
+# +agent_address+::      The address of the machine on which the agent resides.
+# +service_point+::      The service point of the agent from which to collect the data.
+# +username+::           The username to use when connecting to the specified service point.
+# +password+::           The password to use when connecting to the specified service point.
+# +attribute_group+::    The TEMS name of the attribute group whose data should be collected.
+# +subnodes+::           An array of subnode managed system names for which to collect data.
+# +port+::               The port via which to communicate with the agent. Defaults to 1920.
+def get_attribute_group_data(agent_address, service_point, username, password, attribute_group, subnodes, port=1920)
+  require 'net/http'
+
+  uri = URI("http://#{agent_address}:#{port}///#{service_point}/#{service_point}")
+  body = "<REPORT><SQLTABLE NULLATTROUTPUT=\"Y\"><TABLENAME>#{attribute_group}</TABLENAME><SUBNODES>#{subnodes.join(",")}</SUBNODES></SQLTABLE></REPORT>"
+
+  # warn "Sending HTTP POST to #{uri} with body #{body}"
+
+  request = Net::HTTP::Post.new(uri.path)
+  request.basic_auth(username, password)
+  request.body = body
+
+  response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(request) }
+  if not response.is_a?(Net::HTTPOK)
+    $stderr.puts "Response #{response.code}: #{response.body}"
+    return nil
+  end
+
+  # warn "Received #{response.body}"
+  return AttributeGroupData.new_with_xml(response.body)
+end
+
+
+##
+# Parses the specified arguments (presumably ARGV), returning the agent address, service point, username, password, and attribute
+# group that were specified on the command line, in addition a list of columns and subnodes in an OpenStruct object.
+#
+# +args+::  The arguments to parse. These presumably came from the command-line.
+def parse_args(args)
+  require 'ostruct'
+  require 'optparse'
+
+  parser = OptionParser.new
+  options = OpenStruct.new
+
+  options.output = STDOUT
+  options.format = :text
+  options.columns = nil
+  options.subnodes = [ ]
+
+  parser.banner = "Usage: #{$0} [options] agent_address service_point username password attribute_group"
+  parser.on("-h", "--help", "Show this message.") { $stderr.puts parser; exit }
+  parser.on("-f", "--format [ 'text' | 'html' ]", [:text, :html], "Set the output format to either plain text or HTML.", "[default: text]") { |f| options.format = f }
+  parser.on("-c", "--columns c1,...,cN", Array, "Output columns c1,...,cN.", "[default: all columns]") { |c| options.columns = c }
+  parser.on("-s", "--subnodes s1,...,sN", Array, "Collects data for subnodes s1,...,sN.", "[default: no subnodes]") { |s| options.subnodes = s }
+
+  rest = parser.parse(args)
+
+  # Ensure we have all the required args
+  if rest.length != 5
+    $stderr.puts parser
+    exit
+  end
+
+  return *rest, options
+end
+
+
+if __FILE__ == $0
+  # Parse the command-line arguments
+  agent_address, service_point, username, password, attribute_group, options = parse_args(ARGV)
+
+  # Get the attribute group data
+  data = get_attribute_group_data(agent_address, service_point, username, password, attribute_group, options.subnodes)
+
+  # Output the data as a table
+  puts data.to_table(options.columns, options.format) if data
+end
