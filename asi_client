@@ -1,16 +1,38 @@
 #!/usr/bin/env ruby
-
 #
+# Copyright (c) 2012 Prachi Gauriar.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+
+##
 # This script collects data from an IBM Tivoli Monitoring agent using the HTTP-based Agent Service Interface (ASI).
 # It does not perform much error checking nor does it do anything with returned data beyond printing it out to the
 # standard output device. However, the +get_attribute_group_data+ function can be used or built upon to make a more
 # robust ASI client.
-
+#
+# Note: the ASI client requires the libxml-ruby gem.
 
 ##
-# Instances of AttributeGroupData model the data for a single ITM attribute group. Each instance has a name and a set of rows.
-# The primary methods to use are +new_with_xml+, which takes the XML response string from an ASI request and returns an
-# AttributeGroupData instance, and +to_table+, which returns a tabular string representation of the receiver .
+# Instances of AttributeGroupData model the data for a single ITM attribute group. Each instance has a name and a set
+# of rows. The primary methods to use are +new_with_xml+, which takes the XML response string from an ASI request and
+# returns an AttributeGroupData instance, and +to_table+, which returns a tabular string representation of the receiver.
 class AttributeGroupData
   include Enumerable
 
@@ -19,8 +41,8 @@ class AttributeGroupData
   attr_reader :name
 
   ##
-  # An array of rows representing the attribute group's data. Each element in +rows+ is a hash whose key is a column name and whose
-  # value is the attribute value for that row and column.
+  # An array of rows representing the attribute group's data. Each element in +rows+ is a hash whose key is a column
+  # name and whose value is the attribute value for that row and column.
   attr_reader :rows
 
 
@@ -161,7 +183,10 @@ def parse_args(args)
 
   parser.banner = "Usage: #{$0} [options] agent_address service_point username password attribute_group"
   parser.on("-h", "--help", "Show this message.") { $stderr.puts parser; exit }
-  parser.on("-f", "--format [ 'text' | 'html' ]", [:text, :html], "Set the output format to either plain text or HTML.", "[default: text]") { |f| options.format = f }
+  parser.on("-f", "--format [ 'text' | 'html' ]", [:text, :html],
+            "Set the output format to either plain text or HTML.", "[default: text]") do |f|
+    options.format = f
+  end
   parser.on("-c", "--columns c1,...,cN", Array, "Output columns c1,...,cN.", "[default: all columns]") { |c| options.columns = c }
   parser.on("-s", "--subnodes s1,...,sN", Array, "Collects data for subnodes s1,...,sN.", "[default: no subnodes]") { |s| options.subnodes = s }
 
